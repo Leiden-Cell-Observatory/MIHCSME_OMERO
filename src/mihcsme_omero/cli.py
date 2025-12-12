@@ -13,9 +13,11 @@ from rich.logging import RichHandler
 from rich.table import Table
 
 from mihcsme_omero import __version__
+from mihcsme_omero.models import MIHCSMEMetadata
 from mihcsme_omero.omero_connection import connect
 from mihcsme_omero.parser import parse_excel_to_model
 from mihcsme_omero.uploader import upload_metadata_to_omero
+from mihcsme_omero.writer import write_metadata_to_excel
 
 app = typer.Typer(
     name="mihcsme",
@@ -30,6 +32,25 @@ def version_callback(value: bool) -> None:
     if value:
         console.print(f"mihcsme-omero version: {__version__}")
         raise typer.Exit()
+
+
+def load_metadata(file_path: Path) -> MIHCSMEMetadata:
+    """
+    Load metadata from either Excel (.xlsx) or JSON file.
+
+    :param file_path: Path to Excel or JSON file
+    :return: Parsed MIHCSMEMetadata object
+    """
+    if file_path.suffix.lower() == '.json':
+        # Load from JSON
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return MIHCSMEMetadata.model_validate(data)
+    elif file_path.suffix.lower() in ['.xlsx', '.xls']:
+        # Load from Excel
+        return parse_excel_to_model(file_path)
+    else:
+        raise ValueError(f"Unsupported file format: {file_path.suffix}. Use .xlsx or .json")
 
 
 @app.callback()
@@ -113,10 +134,58 @@ def parse(
 
 
 @app.command()
-def upload(
-    excel_file: Path = typer.Argument(
+def to_excel(
+    json_file: Path = typer.Argument(
         ...,
-        help="Path to MIHCSME Excel file",
+        help="Path to MIHCSME JSON file",
+        exists=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Output Excel file (default: same name as input with .xlsx extension)",
+    ),
+) -> None:
+    """
+    Convert MIHCSME JSON file to Excel format.
+
+    This creates an Excel file from a JSON metadata file, useful for
+    editing or sharing the metadata in Excel format.
+    """
+    try:
+        console.print(f"[bold blue]Loading JSON file:[/bold blue] {json_file}")
+
+        # Load from JSON
+        with open(json_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        metadata = MIHCSMEMetadata.model_validate(data)
+
+        # Determine output path
+        if output is None:
+            output = json_file.with_suffix(".xlsx")
+
+        # Write to Excel
+        console.print(f"[bold blue]Writing to Excel:[/bold blue] {output}")
+        write_metadata_to_excel(metadata, output)
+
+        console.print(f"[bold green]✓[/bold green] Successfully converted to Excel: {output}")
+
+        # Print summary
+        _print_metadata_summary(metadata)
+
+    except Exception as e:
+        console.print(f"[bold red]✗ Error:[/bold red] {e}")
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def upload(
+    metadata_file: Path = typer.Argument(
+        ...,
+        help="Path to MIHCSME Excel (.xlsx) or JSON (.json) file",
         exists=True,
         dir_okay=False,
         readable=True,
@@ -174,8 +243,9 @@ def upload(
     ),
 ) -> None:
     """
-    Upload MIHCSME metadata from Excel to OMERO.
+    Upload MIHCSME metadata from Excel or JSON to OMERO.
 
+    Accepts either Excel (.xlsx) or JSON (.json) files.
     You must specify either --screen-id or --plate-id as the target.
     """
     # Validate target specification
@@ -193,9 +263,10 @@ def upload(
     target_id = screen_id if screen_id else plate_id
 
     try:
-        # Parse Excel to Pydantic model
-        console.print(f"[bold blue]Parsing Excel file:[/bold blue] {excel_file}")
-        metadata = parse_excel_to_model(excel_file)
+        # Load metadata from Excel or JSON
+        file_type = "JSON" if metadata_file.suffix.lower() == '.json' else "Excel"
+        console.print(f"[bold blue]Loading {file_type} file:[/bold blue] {metadata_file}")
+        metadata = load_metadata(metadata_file)
         _print_metadata_summary(metadata)
 
         # Connect to OMERO
