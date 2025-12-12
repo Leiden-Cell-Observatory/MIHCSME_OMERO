@@ -5,81 +5,909 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field, field_validator
 
 
-class InvestigationInformation(BaseModel):
-    """Investigation-level metadata organized by annotation groups."""
+def _model_to_dict_with_aliases(model: BaseModel) -> Dict[str, Any]:
+    """Convert a Pydantic model to dictionary using field aliases.
 
-    groups: Dict[str, Dict[str, Any]] = Field(
-        default_factory=dict,
-        description="Nested dictionary: {group_name: {key: value}}",
+    This helper automatically includes all non-None fields using their
+    aliases (as defined in Field(alias=...)).
+
+    Args:
+        model: Pydantic model instance
+
+    Returns:
+        Dictionary with alias names as keys and field values
+    """
+    result = {}
+    for field_name, field_info in model.model_fields.items():
+        value = getattr(model, field_name)
+        if value is not None and value != "":
+            # Use the alias if defined, otherwise use field name
+            key = field_info.alias if field_info.alias else field_name
+            result[key] = value
+    return result
+
+
+# ============================================================================
+# Investigation Information Models
+# ============================================================================
+
+
+class DataOwner(BaseModel):
+    """Data owner information."""
+
+    first_name: Optional[str] = Field(None, alias="First Name", description="First Name")
+    middle_names: Optional[str] = Field(
+        None, alias="Middle Name(s)", description="Middle Name(s) if any"
     )
+    last_name: Optional[str] = Field(None, alias="Last Name", description="Last Name")
+    user_name: Optional[str] = Field(
+        None, alias="User name", description="Institutional user name"
+    )
+    institute: Optional[str] = Field(
+        None,
+        alias="Institute",
+        description="Institute level, e.g. Universiteit Leiden, Faculty of Science, Institute of Biology",
+    )
+    email: Optional[str] = Field(
+        None, alias="E-Mail Address", description="Institution email address"
+    )
+    orcid: Optional[str] = Field(
+        None,
+        alias="ORCID investigator",
+        description="ORCID ID as URL, e.g. https://orcid.org/0000-0002-3704-3675",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("orcid")
+    @classmethod
+    def validate_orcid(cls, v: Optional[str]) -> Optional[str]:
+        """Validate ORCID format."""
+        if v is None or v == "":
+            return None
+        if not v.startswith("https://orcid.org/"):
+            raise ValueError("ORCID must be a URL starting with https://orcid.org/")
+        return v
+
+
+class DataCollaborator(BaseModel):
+    """Data collaborator information."""
+
+    orcid: Optional[str] = Field(
+        None,
+        alias="ORCID  Data Collaborator",
+        description="ORCID ID of collaborator with experimental, collection or analysis part of this investigation",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("orcid")
+    @classmethod
+    def validate_orcid(cls, v: Optional[str]) -> Optional[str]:
+        """Validate ORCID format."""
+        if v is None or v == "":
+            return None
+        if not v.startswith("https://orcid.org/"):
+            raise ValueError("ORCID must be a URL starting with https://orcid.org/")
+        return v
+
+
+class InvestigationInfo(BaseModel):
+    """Core investigation information."""
+
+    project_id: Optional[str] = Field(
+        None, alias="Project ID", description="EU/NWO/consortium ID – Examples: EuTOX"
+    )
+    investigation_title: Optional[str] = Field(
+        None,
+        alias="Investigation Title",
+        description="High level concept to link related studies",
+    )
+    investigation_internal_id: Optional[str] = Field(
+        None,
+        alias="Investigation internal ID",
+        description="Corresponding internal ID for your investigation",
+    )
+    investigation_description: Optional[str] = Field(
+        None,
+        alias="Investigation description",
+        description="Short description for your investigation",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("project_id", "investigation_internal_id", mode="before")
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Convert numbers and other types to string."""
+        if v is None or v == "":
+            return None
+        return str(v)
+
+
+class InvestigationInformation(BaseModel):
+    """Investigation-level metadata with structured fields."""
+
+    data_owner: Optional[DataOwner] = Field(None, description="Data owner information")
+    data_collaborators: List[DataCollaborator] = Field(
+        default_factory=list, description="List of data collaborators"
+    )
+    investigation_info: Optional[InvestigationInfo] = Field(
+        None, description="Core investigation information"
+    )
+
+    @property
+    def groups(self) -> Dict[str, Dict[str, Any]]:
+        """Convert to groups dictionary format for OMERO upload."""
+        return self.to_groups_dict()
+
+    def to_groups_dict(self) -> Dict[str, Dict[str, Any]]:
+        """Convert to groups dictionary format."""
+        groups = {}
+
+        # DataOwner group - automatically include all fields
+        if self.data_owner:
+            data = _model_to_dict_with_aliases(self.data_owner)
+            if data:
+                groups["DataOwner"] = data
+
+        # DataCollaborator group
+        if self.data_collaborators:
+            groups["DataCollaborator"] = {}
+            for i, collab in enumerate(self.data_collaborators):
+                if collab.orcid:
+                    # All use same key name per template
+                    groups["DataCollaborator"][f"ORCID  Data Collaborator_{i}"] = collab.orcid
+
+        # InvestigationInformation group - automatically include all fields
+        if self.investigation_info:
+            data = _model_to_dict_with_aliases(self.investigation_info)
+            if data:
+                groups["InvestigationInformation"] = data
+
+        return groups
+
+    @classmethod
+    def from_groups_dict(
+        cls, groups: Dict[str, Dict[str, Any]]
+    ) -> "InvestigationInformation":
+        """Create from groups dictionary format."""
+        # Parse DataOwner
+        data_owner = None
+        if "DataOwner" in groups:
+            data_owner = DataOwner(**groups["DataOwner"])
+
+        # Parse DataCollaborators
+        data_collaborators = []
+        if "DataCollaborator" in groups:
+            for key, value in groups["DataCollaborator"].items():
+                if "ORCID" in key and value:
+                    data_collaborators.append(DataCollaborator(orcid=value))
+
+        # Parse InvestigationInformation
+        investigation_info = None
+        if "InvestigationInformation" in groups:
+            investigation_info = InvestigationInfo(**groups["InvestigationInformation"])
+
+        return cls(
+            data_owner=data_owner,
+            data_collaborators=data_collaborators,
+            investigation_info=investigation_info,
+        )
 
     class Config:
         extra = "allow"
         json_schema_extra = {
             "example": {
-                "groups": {
-                    "Investigation": {
-                        "Investigation Identifier": "INV-001",
-                        "Investigation Title": "Example Investigation",
-                    }
-                }
+                "data_owner": {
+                    "first_name": "Jane",
+                    "last_name": "Doe",
+                    "email": "j.doe@example.com",
+                    "orcid": "https://orcid.org/0000-0002-3704-3675",
+                },
+                "investigation_info": {
+                    "investigation_title": "Example Investigation",
+                    "project_id": "EuTOX",
+                },
             }
         }
+
+
+class Study(BaseModel):
+    """Study information."""
+
+    study_title: Optional[str] = Field(
+        None,
+        alias="Study Title",
+        description="Manuscript/chapter/publication/paragraph title describing purpose or intention for one or multiple assays",
+    )
+    study_internal_id: Optional[str] = Field(
+        None, alias="Study internal ID", description="Study ID, linked to ELN or lab journal"
+    )
+    study_description: Optional[str] = Field(
+        None,
+        alias="Study Description",
+        description="Description of study with additional unstructured information",
+    )
+    study_key_words: Optional[str] = Field(
+        None,
+        alias="Study Key Words",
+        description="List of key words associated with your study (EFO-terms)",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("study_internal_id", mode="before")
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Convert numbers and other types to string."""
+        if v is None or v == "":
+            return None
+        return str(v)
+
+
+class Biosample(BaseModel):
+    """Biosample information."""
+
+    biosample_taxon: Optional[str] = Field(
+        None,
+        alias="Biosample Taxon",
+        description="NCBI-taxon id, human = NCBITAXON:9606",
+    )
+    biosample_description: Optional[str] = Field(
+        None, alias="Biosample description", description="Description of biosample genotype"
+    )
+    biosample_organism: Optional[str] = Field(
+        None,
+        alias="Biosample Organism",
+        description="Which organism is your cell lines or tissue from. Examples: Human or mouse",
+    )
+    number_of_cell_lines_used: Optional[str] = Field(
+        None,
+        alias="Number of cell lines used",
+        description="In case multiple cell lines are used indicate here",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("number_of_cell_lines_used", mode="before")
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Convert numbers and other types to string."""
+        if v is None or v == "":
+            return None
+        return str(v)
+
+
+class Library(BaseModel):
+    """Library information."""
+
+    library_file_name: Optional[str] = Field(
+        None, alias="Library File Name", description="Library file info"
+    )
+    library_file_format: Optional[str] = Field(
+        None, alias="Library File Format", description="Library file info"
+    )
+    library_type: Optional[str] = Field(None, alias="Library Type", description="Library file info")
+    library_manufacturer: Optional[str] = Field(
+        None, alias="Library Manufacturer", description="Library file info"
+    )
+    library_version: Optional[str] = Field(
+        None, alias="Library Version", description="Library file info"
+    )
+    library_experimental_conditions: Optional[str] = Field(
+        None,
+        alias="Library Experimental Conditions",
+        description="Any experimental conditions some cells were grown under as part of the study",
+    )
+    quality_control_description: Optional[str] = Field(
+        None,
+        alias="Quality Control Description",
+        description="A brief description of the kind of quality control measures that were taken",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("library_version", mode="before")
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Convert any type (including dates) to string."""
+        if v is None or v == "":
+            return None
+        # Handle pandas Timestamp or datetime objects
+        if hasattr(v, "isoformat"):
+            return v.isoformat()
+        return str(v)
+
+
+class Protocols(BaseModel):
+    """Protocol information."""
+
+    hcs_library_protocol: Optional[str] = Field(
+        None,
+        alias="HCS library protocol",
+        description="Url/doi protocols.io or ELN associated url. At least SOP/protocol filename",
+    )
+    growth_protocol: Optional[str] = Field(
+        None,
+        alias="growth protocol",
+        description="Url/doi protocols.io or ELN associated url. At least SOP/protocol filename",
+    )
+    treatment_protocol: Optional[str] = Field(
+        None,
+        alias="treatment protocol",
+        description="Url/doi protocols.io or ELN associated url. At least SOP/protocol filename",
+    )
+    hcs_data_analysis_protocol: Optional[str] = Field(
+        None,
+        alias="HCS data analysis protocol",
+        description="Url/doi protocols.io or ELN associated url. At least SOP/protocol filename",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class Plate(BaseModel):
+    """Plate information."""
+
+    plate_type: Optional[str] = Field(None, alias="Plate type", description="Example: uclear")
+    plate_type_manufacturer: Optional[str] = Field(
+        None, alias="Plate type Manufacturer", description="Example: Greiner Bio-One"
+    )
+    plate_type_catalog_number: Optional[str] = Field(
+        None, alias="Plate type Catalog number", description="Example: 781081"
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("plate_type_catalog_number", mode="before")
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Convert numbers and other types to string."""
+        if v is None or v == "":
+            return None
+        return str(v)
 
 
 class StudyInformation(BaseModel):
-    """Study-level metadata organized by annotation groups."""
+    """Study-level metadata with structured fields."""
 
-    groups: Dict[str, Dict[str, Any]] = Field(
-        default_factory=dict,
-        description="Nested dictionary: {group_name: {key: value}}",
-    )
+    study: Optional[Study] = Field(None, description="Study information")
+    biosample: Optional[Biosample] = Field(None, description="Biosample information")
+    library: Optional[Library] = Field(None, description="Library information")
+    protocols: Optional[Protocols] = Field(None, description="Protocol information")
+    plate: Optional[Plate] = Field(None, description="Plate information")
+
+    @property
+    def groups(self) -> Dict[str, Dict[str, Any]]:
+        """Convert to groups dictionary format for OMERO upload."""
+        return self.to_groups_dict()
+
+    def to_groups_dict(self) -> Dict[str, Dict[str, Any]]:
+        """Convert to groups dictionary format."""
+        groups = {}
+
+        # Study group - automatically include all fields
+        if self.study:
+            data = _model_to_dict_with_aliases(self.study)
+            if data:
+                groups["Study"] = data
+
+        # Biosample group - automatically include all fields
+        if self.biosample:
+            data = _model_to_dict_with_aliases(self.biosample)
+            if data:
+                groups["Biosample"] = data
+
+        # Library group - automatically include all fields
+        if self.library:
+            data = _model_to_dict_with_aliases(self.library)
+            if data:
+                groups["Library"] = data
+
+        # Protocols group - automatically include all fields
+        if self.protocols:
+            data = _model_to_dict_with_aliases(self.protocols)
+            if data:
+                groups["Protocols"] = data
+
+        # Plate group - automatically include all fields
+        if self.plate:
+            data = _model_to_dict_with_aliases(self.plate)
+            if data:
+                groups["Plate"] = data
+
+        return groups
+
+    @classmethod
+    def from_groups_dict(cls, groups: Dict[str, Dict[str, Any]]) -> "StudyInformation":
+        """Create from groups dictionary format."""
+        # Parse Study
+        study = None
+        if "Study" in groups:
+            study = Study(**groups["Study"])
+
+        # Parse Biosample
+        biosample = None
+        if "Biosample" in groups:
+            biosample = Biosample(**groups["Biosample"])
+
+        # Parse Library
+        library = None
+        if "Library" in groups:
+            library = Library(**groups["Library"])
+
+        # Parse Protocols
+        protocols = None
+        if "Protocols" in groups:
+            protocols = Protocols(**groups["Protocols"])
+
+        # Parse Plate
+        plate = None
+        if "Plate" in groups:
+            plate = Plate(**groups["Plate"])
+
+        return cls(
+            study=study, biosample=biosample, library=library, protocols=protocols, plate=plate
+        )
 
     class Config:
         extra = "allow"
         json_schema_extra = {
             "example": {
-                "groups": {
-                    "Study": {
-                        "Study Identifier": "STD-001",
-                        "Study Title": "Example Study",
-                    }
-                }
+                "study": {
+                    "study_title": "Example Study",
+                    "study_internal_id": "STD-001",
+                },
+                "biosample": {"biosample_organism": "Human"},
             }
         }
 
 
-class AssayInformation(BaseModel):
-    """Assay-level metadata organized by annotation groups."""
+class Assay(BaseModel):
+    """Assay information."""
 
-    groups: Dict[str, Dict[str, Any]] = Field(
-        default_factory=dict,
-        description="Nested dictionary: {group_name: {key: value}}",
+    assay_title: Optional[str] = Field(None, alias="Assay Title", description="Screen name")
+    assay_internal_id: Optional[str] = Field(
+        None,
+        alias="Assay internal ID",
+        description="Experimental ID, e.g. aMV-010, linked to ELN or labjournal",
     )
+    assay_description: Optional[str] = Field(
+        None,
+        alias="Assay Description",
+        description="Description of screen plus additional unstructured information",
+    )
+    assay_number_of_biological_replicates: Optional[str] = Field(
+        None,
+        alias="Assay number of biological replicates",
+        description="Total number of biol. Repl.",
+    )
+    number_of_plates: Optional[str] = Field(
+        None, alias="Number of plates", description="Total number of plates, n-plates"
+    )
+    assay_technology_type: Optional[str] = Field(
+        None, alias="Assay Technology Type", description="Imaging method, Fbbi terms"
+    )
+    assay_type: Optional[str] = Field(
+        None,
+        alias="Assay Type",
+        description="List of options: sub types of HCS e.g. Gene Knock down, RNAi, compound, EFO terms",
+    )
+    assay_external_url: Optional[str] = Field(
+        None,
+        alias="Assay External URL",
+        description="ELN or any other external url link to this screen",
+    )
+    assay_data_url: Optional[str] = Field(
+        None, alias="Assay data URL", description="OMERO url link to this screen"
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator(
+        "assay_internal_id",
+        "assay_number_of_biological_replicates",
+        "number_of_plates",
+        mode="before",
+    )
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Convert numbers and other types to string."""
+        if v is None or v == "":
+            return None
+        return str(v)
+
+
+class AssayComponent(BaseModel):
+    """Assay component information."""
+
+    imaging_protocol: Optional[str] = Field(
+        None,
+        alias="Imaging protocol",
+        description="Url to protocols.io or protocols in ELN, at least protocol file name",
+    )
+    sample_preparation_protocol: Optional[str] = Field(
+        None,
+        alias="Sample preparation protocol",
+        description="Sample preparation method (Formaldahyde (PFA) fixed tissue, Live cells, unfixed tissue)",
+    )
+
+    model_config = {"populate_by_name": True}
+
+
+class BiosampleAssay(BaseModel):
+    """Biosample information specific to assay."""
+
+    cell_lines_storage_location: Optional[str] = Field(
+        None,
+        alias="Cell lines storage location",
+        description="Storage location according to Database used or at least location",
+    )
+    cell_lines_clone_number: Optional[str] = Field(
+        None, alias="Cell lines clone number", description="Storage location DB info"
+    )
+    cell_lines_passage_number: Optional[str] = Field(
+        None,
+        alias="Cell lines Passage number",
+        description="Passage number of your cells",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("cell_lines_clone_number", "cell_lines_passage_number", mode="before")
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Convert numbers and other types to string."""
+        if v is None or v == "":
+            return None
+        return str(v)
+
+
+class ImageData(BaseModel):
+    """Image data information."""
+
+    image_number_of_pixelsx: Optional[str] = Field(
+        None,
+        alias="Image number of pixelsX",
+        description="Indicate number of pixels in x in images",
+    )
+    image_number_of_pixelsy: Optional[str] = Field(
+        None,
+        alias="Image number of pixelsY",
+        description="Indicate number of pixels in y in images",
+    )
+    image_number_of_z_stacks: Optional[str] = Field(
+        None,
+        alias="Image number of  z-stacks",
+        description="Indicate number z stacks in image, single image is z=1",
+    )
+    image_number_of_channels: Optional[str] = Field(
+        None,
+        alias="Image number of channels",
+        description="Indicate number of channels in your image",
+    )
+    image_number_of_timepoints: Optional[str] = Field(
+        None,
+        alias="Image number of timepoints",
+        description="Indicate number of time point(s) in your image",
+    )
+    image_sites_per_well: Optional[str] = Field(
+        None, alias="Image sites per well", description="Number of fields, numeric value"
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator(
+        "image_number_of_pixelsx",
+        "image_number_of_pixelsy",
+        "image_number_of_z_stacks",
+        "image_number_of_channels",
+        "image_number_of_timepoints",
+        "image_sites_per_well",
+        mode="before",
+    )
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Convert numbers and other types to string."""
+        if v is None or v == "":
+            return None
+        return str(v)
+
+
+class ImageAcquisition(BaseModel):
+    """Image acquisition information."""
+
+    microscope_id: Optional[str] = Field(
+        None,
+        alias="Microscope id",
+        description="Url to micrometa app file link or other url describing your microscope",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator("microscope_id", mode="before")
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Convert numbers and other types to string."""
+        if v is None or v == "":
+            return None
+        return str(v)
+
+
+class Specimen(BaseModel):
+    """Specimen/channel information."""
+
+    channel_transmission_id: Optional[str] = Field(
+        None,
+        alias="Channel Transmission id",
+        description="Channel id is dependent on different machines, first or last. If No transmission is acquired state NA",
+    )
+    # Channel 1
+    channel_1_visualization_method: Optional[str] = Field(
+        None,
+        alias="Channel 1 visualization method",
+        description="Visualization method (example: Hoechst staining)",
+    )
+    channel_1_entity: Optional[str] = Field(
+        None, alias="Channel 1 entity", description="Entity visualized (example: DNA)"
+    )
+    channel_1_label: Optional[str] = Field(
+        None,
+        alias="Channel 1 label",
+        description="Label used for entity (example:Nuclei)",
+    )
+    channel_1_id: Optional[str] = Field(
+        None,
+        alias="Channel 1 id",
+        description="sequential id of channel order in your image",
+    )
+    # Channel 2
+    channel_2_visualization_method: Optional[str] = Field(
+        None,
+        alias="Channel 2 visualization method",
+        description="Visualization method (example: GFP)",
+    )
+    channel_2_entity: Optional[str] = Field(
+        None, alias="Channel 2 entity", description="Entity visualized (example: MAP1LC3B)"
+    )
+    channel_2_label: Optional[str] = Field(
+        None,
+        alias="Channel 2 label",
+        description="Label used for entity (example:GFP-LC3)",
+    )
+    channel_2_id: Optional[str] = Field(
+        None,
+        alias="Channel 2 id",
+        description="sequential id of channel order in your image",
+    )
+    # Channel 3
+    channel_3_visualization_method: Optional[str] = Field(
+        None,
+        alias="Channel 3 visualization method",
+        description="Visualization method (example: PI staining)",
+    )
+    channel_3_entity: Optional[str] = Field(
+        None,
+        alias="Channel 3 entity",
+        description="Entity visualized (example: Death cell DNA)",
+    )
+    channel_3_label: Optional[str] = Field(
+        None, alias="Channel 3 label", description="Label used for entity (example:PI)"
+    )
+    channel_3_id: Optional[str] = Field(
+        None,
+        alias="Channel 3 id",
+        description="sequential id of channel order in your image",
+    )
+    # Channel 4
+    channel_4_visualization_method: Optional[str] = Field(
+        None,
+        alias="Channel 4 visualization method",
+        description="Visualization method (example: Apoptotic marker Annexin V staining)",
+    )
+    channel_4_entity: Optional[str] = Field(
+        None,
+        alias="Channel 4 entity",
+        description="Entity visualized (example: Apoptotic cells)",
+    )
+    channel_4_label: Optional[str] = Field(
+        None,
+        alias="Channel 4 label",
+        description="Label used for entity (example:Annexin-V)",
+    )
+    channel_4_id: Optional[str] = Field(
+        None,
+        alias="Channel 4 id",
+        description="sequential id of channel order in your image",
+    )
+
+    model_config = {"populate_by_name": True}
+
+    @field_validator(
+        "channel_transmission_id",
+        "channel_1_id",
+        "channel_2_id",
+        "channel_3_id",
+        "channel_4_id",
+        mode="before",
+    )
+    @classmethod
+    def coerce_to_string(cls, v: Any) -> Optional[str]:
+        """Convert numbers and other types to string."""
+        if v is None or v == "":
+            return None
+        return str(v)
+
+
+class AssayInformation(BaseModel):
+    """Assay-level metadata with structured fields."""
+
+    assay: Optional[Assay] = Field(None, description="Assay information")
+    assay_component: Optional[AssayComponent] = Field(
+        None, description="Assay component information"
+    )
+    biosample: Optional[BiosampleAssay] = Field(None, description="Biosample information")
+    image_data: Optional[ImageData] = Field(None, description="Image data information")
+    image_acquisition: Optional[ImageAcquisition] = Field(
+        None, description="Image acquisition information"
+    )
+    specimen: Optional[Specimen] = Field(None, description="Specimen/channel information")
+
+    @property
+    def groups(self) -> Dict[str, Dict[str, Any]]:
+        """Convert to groups dictionary format for OMERO upload."""
+        return self.to_groups_dict()
+
+    def to_groups_dict(self) -> Dict[str, Dict[str, Any]]:
+        """Convert to groups dictionary format."""
+        groups = {}
+
+        # Assay group - automatically include all fields
+        if self.assay:
+            data = _model_to_dict_with_aliases(self.assay)
+            if data:
+                groups["Assay"] = data
+
+        # AssayComponent group - automatically include all fields
+        if self.assay_component:
+            data = _model_to_dict_with_aliases(self.assay_component)
+            if data:
+                groups["AssayComponent"] = data
+
+        # Biosample group - automatically include all fields
+        if self.biosample:
+            data = _model_to_dict_with_aliases(self.biosample)
+            if data:
+                groups["Biosample"] = data
+
+        # ImageData group - automatically include all fields
+        if self.image_data:
+            data = _model_to_dict_with_aliases(self.image_data)
+            if data:
+                groups["ImageData"] = data
+
+        # ImageAcquisition group - automatically include all fields
+        if self.image_acquisition:
+            data = _model_to_dict_with_aliases(self.image_acquisition)
+            if data:
+                groups["ImageAcquisition"] = data
+
+        # Specimen group - automatically include all fields
+        if self.specimen:
+            data = _model_to_dict_with_aliases(self.specimen)
+            if data:
+                groups["Specimen"] = data
+
+        return groups
+
+    @classmethod
+    def from_groups_dict(cls, groups: Dict[str, Dict[str, Any]]) -> "AssayInformation":
+        """Create from groups dictionary format."""
+        # Parse Assay
+        assay = None
+        if "Assay" in groups:
+            assay = Assay(**groups["Assay"])
+
+        # Parse AssayComponent
+        assay_component = None
+        if "AssayComponent" in groups:
+            assay_component = AssayComponent(**groups["AssayComponent"])
+
+        # Parse Biosample
+        biosample = None
+        if "Biosample" in groups:
+            biosample = BiosampleAssay(**groups["Biosample"])
+
+        # Parse ImageData
+        image_data = None
+        if "ImageData" in groups:
+            image_data = ImageData(**groups["ImageData"])
+
+        # Parse ImageAcquisition
+        image_acquisition = None
+        if "ImageAcquisition" in groups:
+            image_acquisition = ImageAcquisition(**groups["ImageAcquisition"])
+
+        # Parse Specimen
+        specimen = None
+        if "Specimen" in groups:
+            specimen = Specimen(**groups["Specimen"])
+
+        return cls(
+            assay=assay,
+            assay_component=assay_component,
+            biosample=biosample,
+            image_data=image_data,
+            image_acquisition=image_acquisition,
+            specimen=specimen,
+        )
 
     class Config:
         extra = "allow"
         json_schema_extra = {
             "example": {
-                "groups": {
-                    "Assay": {
-                        "Assay Identifier": "ASY-001",
-                        "Assay Technology Type": "Microscopy",
-                    }
-                }
+                "assay": {
+                    "assay_title": "Example Screen",
+                    "assay_internal_id": "ASY-001",
+                },
+                "image_data": {"image_number_of_channels": "3"},
             }
         }
 
 
 class AssayCondition(BaseModel):
-    """Single well condition from AssayConditions sheet."""
+    """Single well condition from AssayConditions sheet.
 
-    plate: str = Field(..., description="Plate identifier/name")
-    well: str = Field(..., description="Well identifier (e.g., A01, B12)")
+    This model supports both standard fields (Treatment, Dose, etc.) and
+    custom fields via the conditions dictionary.
+    """
+
+    # Required fields
+    plate: str = Field(..., alias="Plate", description="Plate identifier/name")
+    well: str = Field(..., alias="Well", description="Well identifier (e.g., A01, B12)")
+
+    # Common optional fields with type safety
+    treatment: Optional[str] = Field(
+        None, alias="Treatment", description="Treatment applied to this well"
+    )
+    dose: Optional[str] = Field(None, alias="Dose", description="Dose of treatment")
+    dose_unit: Optional[str] = Field(
+        None, alias="DoseUnit", description="Unit of dose (e.g., µM, nM)"
+    )
+    cell_line: Optional[str] = Field(
+        None, alias="CellLine", description="Cell line used in this well"
+    )
+    time_treatment: Optional[str] = Field(
+        None, alias="TimeTreatment", description="Duration of treatment"
+    )
+    repl_id: Optional[str] = Field(
+        None, alias="ReplID", description="Replicate identifier"
+    )
+    remarks: Optional[str] = Field(None, alias="remarks", description="Additional remarks")
+
+    # Flexible dictionary for any additional custom fields
     conditions: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Additional metadata fields for this well",
+        description="Additional custom metadata fields for this well",
     )
+
+    model_config = {
+        "populate_by_name": True,
+        "json_schema_extra": {
+            "example": {
+                "plate": "Plate1",
+                "well": "A01",
+                "treatment": "DMSO",
+                "dose": "0.1",
+                "dose_unit": "µM",
+                "conditions": {
+                    "CustomField1": "Value1",
+                    "CustomField2": "Value2",
+                },
+            }
+        },
+    }
 
     @field_validator("well")
     @classmethod
@@ -102,18 +930,6 @@ class AssayCondition(BaseModel):
             return f"{row_letter}{col_num:02d}"
         except ValueError:
             raise ValueError(f"Invalid well format: {v}")
-
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "plate": "Plate1",
-                "well": "A01",
-                "conditions": {
-                    "Compound": "DMSO",
-                    "Concentration": "0.1%",
-                },
-            }
-        }
 
 
 class ReferenceSheet(BaseModel):
@@ -148,13 +964,13 @@ class MIHCSMEMetadata(BaseModel):
 
     def to_omero_dict(self, namespace_base: str = "MIHCSME") -> Dict[str, Any]:
         """
-        Convert the Pydantic model to the legacy dictionary format for OMERO upload.
+        Convert the Pydantic model to dictionary format for OMERO upload.
 
         Args:
             namespace_base: Base namespace for OMERO annotations
 
         Returns:
-            Dictionary in the format expected by the legacy upload function
+            Dictionary in the format expected by the OMERO upload function
         """
         result: Dict[str, Any] = {}
 
@@ -177,8 +993,24 @@ class MIHCSMEMetadata(BaseModel):
                 condition_dict = {
                     "Plate": condition.plate,
                     "Well": condition.well,
-                    **condition.conditions,
                 }
+                # Add standard fields if they exist
+                if condition.treatment:
+                    condition_dict["Treatment"] = condition.treatment
+                if condition.dose:
+                    condition_dict["Dose"] = condition.dose
+                if condition.dose_unit:
+                    condition_dict["DoseUnit"] = condition.dose_unit
+                if condition.cell_line:
+                    condition_dict["CellLine"] = condition.cell_line
+                if condition.time_treatment:
+                    condition_dict["TimeTreatment"] = condition.time_treatment
+                if condition.repl_id:
+                    condition_dict["ReplID"] = condition.repl_id
+                if condition.remarks:
+                    condition_dict["remarks"] = condition.remarks
+                # Add custom fields from conditions dict
+                condition_dict.update(condition.conditions)
                 conditions_list.append(condition_dict)
             result["AssayConditions"] = conditions_list
 
@@ -191,38 +1023,57 @@ class MIHCSMEMetadata(BaseModel):
     @classmethod
     def from_omero_dict(cls, data: Dict[str, Any]) -> "MIHCSMEMetadata":
         """
-        Create a MIHCSMEMetadata instance from the legacy dictionary format.
+        Create a MIHCSMEMetadata instance from OMERO dictionary format.
 
         Args:
-            data: Dictionary in the legacy format
+            data: Dictionary in OMERO format
 
         Returns:
             MIHCSMEMetadata instance
         """
         investigation_info = None
         if "InvestigationInformation" in data:
-            investigation_info = InvestigationInformation(groups=data["InvestigationInformation"])
+            investigation_info = InvestigationInformation.from_groups_dict(
+                data["InvestigationInformation"]
+            )
 
         study_info = None
         if "StudyInformation" in data:
-            study_info = StudyInformation(groups=data["StudyInformation"])
+            study_info = StudyInformation.from_groups_dict(data["StudyInformation"])
 
         assay_info = None
         if "AssayInformation" in data:
-            assay_info = AssayInformation(groups=data["AssayInformation"])
+            assay_info = AssayInformation.from_groups_dict(data["AssayInformation"])
 
         assay_conditions = []
         if "AssayConditions" in data and isinstance(data["AssayConditions"], list):
+            standard_fields = {
+                "Plate",
+                "Well",
+                "Treatment",
+                "Dose",
+                "DoseUnit",
+                "CellLine",
+                "TimeTreatment",
+                "ReplID",
+                "remarks",
+            }
             for condition_dict in data["AssayConditions"]:
-                plate = condition_dict.get("Plate", "")
-                well = condition_dict.get("Well", "")
-                # Extract all other fields as conditions
-                conditions = {
-                    k: v for k, v in condition_dict.items() if k not in ["Plate", "Well"]
-                }
-                assay_conditions.append(
-                    AssayCondition(plate=plate, well=well, conditions=conditions)
-                )
+                # Separate standard fields from custom fields
+                row_data = {}
+                conditions = {}
+
+                for k, v in condition_dict.items():
+                    if k in standard_fields:
+                        row_data[k] = v
+                    else:
+                        conditions[k] = v
+
+                # Add conditions dict if there are custom fields
+                if conditions:
+                    row_data["conditions"] = conditions
+
+                assay_conditions.append(AssayCondition(**row_data))
 
         reference_sheets = []
         for key, value in data.items():

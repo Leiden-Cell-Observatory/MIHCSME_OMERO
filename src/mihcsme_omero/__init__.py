@@ -11,7 +11,7 @@ from mihcsme_omero.models import (
 )
 from mihcsme_omero.omero_connection import connect
 from mihcsme_omero.parser import parse_excel_to_model
-from mihcsme_omero.uploader import upload_metadata_to_omero
+from mihcsme_omero.uploader import download_metadata_from_omero, upload_metadata_to_omero
 
 __all__ = [
     "__version__",
@@ -23,4 +23,5 @@ __all__ = [
     "connect",
     "parse_excel_to_model",
     "upload_metadata_to_omero",
+    "download_metadata_from_omero",
 ]

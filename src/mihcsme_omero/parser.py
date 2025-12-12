@@ -61,23 +61,23 @@ def parse_excel_to_model(excel_path: Union[str, Path]) -> MIHCSMEMetadata:
         # Parse Investigation Information
         investigation_info = None
         if SHEET_INVESTIGATION in available_sheets:
-            investigation_info = _parse_key_value_sheet(xls, SHEET_INVESTIGATION)
-            if investigation_info:
-                investigation_info = InvestigationInformation(groups=investigation_info)
+            groups_data = _parse_key_value_sheet(xls, SHEET_INVESTIGATION)
+            if groups_data:
+                investigation_info = InvestigationInformation.from_groups_dict(groups_data)
 
         # Parse Study Information
         study_info = None
         if SHEET_STUDY in available_sheets:
-            study_info = _parse_key_value_sheet(xls, SHEET_STUDY)
-            if study_info:
-                study_info = StudyInformation(groups=study_info)
+            groups_data = _parse_key_value_sheet(xls, SHEET_STUDY)
+            if groups_data:
+                study_info = StudyInformation.from_groups_dict(groups_data)
 
         # Parse Assay Information
         assay_info = None
         if SHEET_ASSAY in available_sheets:
-            assay_info = _parse_key_value_sheet(xls, SHEET_ASSAY)
-            if assay_info:
-                assay_info = AssayInformation(groups=assay_info)
+            groups_data = _parse_key_value_sheet(xls, SHEET_ASSAY)
+            if groups_data:
+                assay_info = AssayInformation.from_groups_dict(groups_data)
 
         # Parse Assay Conditions
         assay_conditions = []
@@ -188,6 +188,19 @@ def _parse_assay_conditions(xls: pd.ExcelFile, sheet_name: str) -> list:
         # Drop columns with NaN headers
         data_rows = data_rows.loc[:, ~pd.isna(headers)]
 
+        # Standard fields that have dedicated properties in AssayCondition
+        standard_fields = {
+            "Plate",
+            "Well",
+            "Treatment",
+            "Dose",
+            "DoseUnit",
+            "CellLine",
+            "TimeTreatment",
+            "ReplID",
+            "remarks",
+        }
+
         # Convert to AssayCondition models
         assay_conditions = []
         for _, row in data_rows.iterrows():
@@ -197,19 +210,26 @@ def _parse_assay_conditions(xls: pd.ExcelFile, sheet_name: str) -> list:
             if pd.isna(plate) or pd.isna(well):
                 continue
 
-            # Extract all other fields as conditions
+            # Build the row data dictionary with all non-NaN values
+            row_data = {"Plate": str(plate), "Well": str(well)}
+
+            # Extract standard fields
+            for col in data_rows.columns:
+                if col in standard_fields and col not in ["Plate", "Well"]:
+                    if not pd.isna(row[col]):
+                        row_data[col] = row[col]
+
+            # Extract custom fields into conditions dictionary
             conditions = {}
             for col in data_rows.columns:
-                if col not in ["Plate", "Well"] and not pd.isna(row[col]):
+                if col not in standard_fields and not pd.isna(row[col]):
                     conditions[col] = row[col]
 
-            assay_conditions.append(
-                AssayCondition(
-                    plate=str(plate),
-                    well=str(well),
-                    conditions=conditions,
-                )
-            )
+            # Add conditions to row_data if there are any
+            if conditions:
+                row_data["conditions"] = conditions
+
+            assay_conditions.append(AssayCondition(**row_data))
 
         logger.info(f"Parsed {len(assay_conditions)} assay conditions from '{sheet_name}'")
         return assay_conditions
@@ -227,13 +247,14 @@ def _parse_reference_sheet(xls: pd.ExcelFile, sheet_name: str) -> dict:
         df = pd.read_excel(xls, sheet_name=sheet_name)
 
         # Skip rows that start with '#'
-        df = df[~df.iloc[:, 0].astype(str).str.startswith("#")]
+        if not df.empty and len(df.columns) > 0:
+            df = df[~df.iloc[:, 0].astype(str).str.startswith("#")]
 
         # Skip empty rows
         df = df.dropna(how="all")
 
         if df.empty:
-            logger.debug(f"Reference sheet '{sheet_name}' is empty")
+            logger.debug(f"Reference sheet '{sheet_name}' is empty after filtering")
             return {}
 
         # Find the first non-comment row with data
@@ -243,18 +264,31 @@ def _parse_reference_sheet(xls: pd.ExcelFile, sheet_name: str) -> dict:
                 valid_rows.append(idx)
 
         if not valid_rows:
+            logger.debug(f"Reference sheet '{sheet_name}' has no valid data rows")
+            return {}
+
+        # Need at least 2 rows: one for header, one for data
+        if len(valid_rows) < 2:
+            logger.debug(f"Reference sheet '{sheet_name}' has header but no data rows")
             return {}
 
         header_row_idx = valid_rows[0]
 
-        # Get data
-        headers = df.iloc[header_row_idx].tolist()
+        # Get data (use .loc for label-based indexing after filtering)
+        headers = df.loc[header_row_idx].tolist()
 
         # Check if we have at least two columns
         if len(headers) < 2:
+            logger.debug(f"Reference sheet '{sheet_name}' needs at least 2 columns")
             return {}
 
-        data_rows = df.iloc[header_row_idx + 1 :].copy()
+        # Get data rows (must have at least one row after header)
+        data_start_idx = header_row_idx + 1
+        if data_start_idx not in df.index:
+            logger.debug(f"Reference sheet '{sheet_name}' has no data rows after header")
+            return {}
+
+        data_rows = df.loc[data_start_idx:].copy()
         data_rows.columns = headers
 
         # Convert to dictionary
@@ -271,5 +305,5 @@ def _parse_reference_sheet(xls: pd.ExcelFile, sheet_name: str) -> dict:
         return ref_data
 
     except Exception as e:
-        logger.error(f"Error processing sheet {sheet_name}: {e}")
+        logger.warning(f"Error processing sheet {sheet_name}: {e}")
         return {}
