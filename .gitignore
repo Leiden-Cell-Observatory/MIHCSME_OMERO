@@ -137,3 +137,9 @@ Thumbs.db
 *.json
 !pyproject.toml
 CLAUDE.md
+
+#marimo
+marimo/_static/
+marimo/_lsp/
+.marimo.toml
+__marimo__
