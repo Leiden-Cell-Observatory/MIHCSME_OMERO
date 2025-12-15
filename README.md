@@ -196,19 +196,3 @@ Contributions are welcome! Please:
 ## License
 
 See [LICENSE](LICENSE) file for details.
-
-## Technology Stack
-
-- **omero-py** - Direct OMERO server integration
-- **Pydantic** - Data validation and models
-- **Pandas** - Excel file parsing
-- **Typer** - Modern CLI framework
-- **Rich** - Beautiful terminal output
-
-## References
-
-- [OMERO Documentation](https://docs.openmicroscopy.org/omero/)
-- [OMERO Python Language Bindings](https://github.com/ome/omero-py)
-- [Pydantic Documentation](https://docs.pydantic.dev/)
-- [Typer Documentation](https://typer.tiangolo.com/)
-- [MIHCSME Specification](https://www.ebi.ac.uk/biosamples/docs/references/sampletab)
