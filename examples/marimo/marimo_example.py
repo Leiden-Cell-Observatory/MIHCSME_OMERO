@@ -81,7 +81,7 @@ def _(pd):
     def plot_plate_layout(metadata, variable='treatment', plate_name=None):
         """
         Display plate layout(s) in DataFrame format showing values in each well.
-    
+
         Parameters:
         -----------
         metadata : MIHCSMEMetadata
@@ -91,7 +91,7 @@ def _(pd):
             Can also be a key from conditions dict
         plate_name : str, optional
             Specific plate to plot. If None, plots all plates
-    
+
         Returns:
         --------
         dict or DataFrame: Dictionary of DataFrames (one per plate) or single DataFrame
@@ -101,17 +101,17 @@ def _(pd):
             plates = sorted({c.plate for c in metadata.assay_conditions})
         else:
             plates = [plate_name]
-    
+
         # Define plate dimensions (standard 96-well plate)
         rows = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H']
         cols = [f"{i:02d}" for i in range(1, 13)]
-    
+
         result = {}
-    
+
         for plate in plates:
             # Get conditions for this plate
             plate_conditions = [c for c in metadata.assay_conditions if c.plate == plate]
-        
+
             # Create a dictionary mapping wells to values
             well_values = {}
             for condition in plate_conditions:
@@ -124,7 +124,7 @@ def _(pd):
                 else:
                     value = None
                 well_values[well] = value
-        
+
             # Create DataFrame with row labels and column labels
             data = {}
             for col in cols:
@@ -137,16 +137,16 @@ def _(pd):
                         value = value[:17] + "..."
                     col_data.append(value)
                 data[col] = col_data
-        
+
             df = pd.DataFrame(data, index=rows)
             result[plate] = df
-    
+
         # If only one plate, return the DataFrame directly
         if len(result) == 1:
             plate_name = list(result.keys())[0]
             print(f"\n📊 Plate: {plate_name} | Variable: {variable}\n")
             return result[plate_name]
-    
+
         # If multiple plates, display all
         print(f"\n📊 Variable: {variable} | {len(result)} plates\n")
         return result
@@ -161,7 +161,6 @@ def _(pd):
     # for plate_name, df in plates_dict.items():
     #     print(f"\nPlate: {plate_name}")
     #     display(df)
-
     return (plot_plate_layout,)
 
 
@@ -177,7 +176,6 @@ def _(display, original, plot_plate_layout):
         print(f"{'='*80}")
         display(plate_df)
         print()
-
     return
 
 

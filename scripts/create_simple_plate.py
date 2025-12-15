@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Create a simple OMERO screen/plate structure for testing.
+Create a simple OMERO screen/plate structure with images for testing.
 
 This creates plates with wells and optional synthetic images using ezomero.
 

@@ -156,21 +156,61 @@ def delete_annotations_from_object(
         logger.warning(f"{object_type} {object_id} not found")
         return 0
 
+    # Get object name for better logging
+    obj_name = getattr(obj, "getName", lambda: None)() or f"ID:{object_id}"
+
     annotations_to_delete = []
+    preserved_annotations = []
 
     for ann in obj.listAnnotations():
-        # Filter by namespace if specified
-        if namespace and hasattr(ann, "getNs"):
+        ann_id = ann.getId()
+        ann_type = type(ann).__name__
+        ann_ns = None
+
+        # Get namespace if available
+        if hasattr(ann, "getNs"):
             ann_ns = ann.getNs()
-            if ann_ns and not ann_ns.startswith(namespace):
+
+        # Filter by namespace if specified
+        if namespace:
+            # Skip annotations without getNs attribute (e.g., some annotation types)
+            if not hasattr(ann, "getNs"):
+                preserved_annotations.append(
+                    f"  ✓ Preserved {ann_type} ID:{ann_id} (no getNs method)"
+                )
                 continue
 
-        annotations_to_delete.append(ann.getId())
+            # Skip annotations with no namespace (e.g., FileAnnotations)
+            if not ann_ns:
+                preserved_annotations.append(
+                    f"  ✓ Preserved {ann_type} ID:{ann_id} (no namespace)"
+                )
+                continue
+
+            # Skip annotations whose namespace doesn't match the filter
+            if not ann_ns.startswith(namespace):
+                preserved_annotations.append(
+                    f"  ✓ Preserved {ann_type} ID:{ann_id} (namespace: {ann_ns})"
+                )
+                continue
+
+        # This annotation will be deleted
+        annotations_to_delete.append(ann_id)
+        logger.info(f"  ✗ Deleting {ann_type} ID:{ann_id} (namespace: {ann_ns})")
+
+    # Log preserved annotations at debug level
+    if preserved_annotations:
+        logger.debug(f"{object_type} '{obj_name}' - Preserved annotations:")
+        for msg in preserved_annotations:
+            logger.debug(msg)
 
     if annotations_to_delete:
-        conn.deleteObjects("Annotation", annotations_to_delete, wait=True)
-        logger.debug(
-            f"Deleted {len(annotations_to_delete)} annotations from {object_type} {object_id}"
+        logger.info(
+            f"{object_type} '{obj_name}' - Deleting {len(annotations_to_delete)} "
+            f"annotation(s) matching namespace '{namespace}'"
         )
+        conn.deleteObjects("Annotation", annotations_to_delete, wait=True)
+    else:
+        logger.debug(f"{object_type} '{obj_name}' - No annotations to delete")
 
     return len(annotations_to_delete)

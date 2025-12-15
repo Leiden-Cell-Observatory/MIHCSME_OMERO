@@ -86,10 +86,15 @@ def upload_metadata_to_omero(
             logger.info(f"Removed {removal_count} existing annotations")
 
         # 1. Apply Object-Level Metadata (Screen or Plate level)
-        logger.info(f"--- Applying Metadata to {target_type} {target_id} ---")
+        logger.info(f"\n{'='*80}")
+        logger.info(f"UPLOADING METADATA TO {target_type} (ID: {target_id})")
+        logger.info(f"{'='*80}")
 
         # Apply Investigation Information
         if metadata.investigation_information:
+            logger.info(f"\n[1/4] Uploading Investigation Information...")
+            num_groups = len(metadata.investigation_information.groups)
+            logger.info(f"  → {num_groups} group(s) to upload")
             processed_ok &= _apply_grouped_metadata(
                 conn,
                 target_type,
@@ -97,9 +102,14 @@ def upload_metadata_to_omero(
                 metadata.investigation_information.groups,
                 f"{namespace}/{SHEET_INVESTIGATION}",
             )
+        else:
+            logger.info(f"\n[1/4] No Investigation Information to upload")
 
         # Apply Study Information
         if metadata.study_information:
+            logger.info(f"\n[2/4] Uploading Study Information...")
+            num_groups = len(metadata.study_information.groups)
+            logger.info(f"  → {num_groups} group(s) to upload")
             processed_ok &= _apply_grouped_metadata(
                 conn,
                 target_type,
@@ -107,9 +117,14 @@ def upload_metadata_to_omero(
                 metadata.study_information.groups,
                 f"{namespace}/{SHEET_STUDY}",
             )
+        else:
+            logger.info(f"\n[2/4] No Study Information to upload")
 
         # Apply Assay Information
         if metadata.assay_information:
+            logger.info(f"\n[3/4] Uploading Assay Information...")
+            num_groups = len(metadata.assay_information.groups)
+            logger.info(f"  → {num_groups} group(s) to upload")
             processed_ok &= _apply_grouped_metadata(
                 conn,
                 target_type,
@@ -117,22 +132,18 @@ def upload_metadata_to_omero(
                 metadata.assay_information.groups,
                 f"{namespace}/{SHEET_ASSAY}",
             )
+        else:
+            logger.info(f"\n[3/4] No Assay Information to upload")
 
         # 2. Apply Well-Level Metadata
-        logger.info("--- Applying Well-Level Metadata (AssayConditions) ---")
+        logger.info(f"\n[4/4] Uploading Well-Level Metadata (AssayConditions)...")
 
         if not metadata.assay_conditions:
-            logger.warning("No assay conditions to upload")
+            logger.info("  → No assay conditions to upload")
         else:
-            # Convert to DataFrame for easier processing
-            conditions_data = []
-            for condition in metadata.assay_conditions:
-                row_data = {
-                    "Plate": condition.plate,
-                    "Well": condition.well,
-                    **condition.conditions,
-                }
-                conditions_data.append(row_data)
+            logger.info(f"  → {len(metadata.assay_conditions)} well condition(s) to upload")
+            # Convert to DataFrame for easier processing using to_dict() helper
+            conditions_data = [condition.to_dict() for condition in metadata.assay_conditions]
 
             assay_conditions_df = pd.DataFrame(conditions_data)
             ns_conditions = f"{namespace}/{SHEET_CONDITIONS}"
@@ -167,6 +178,10 @@ def upload_metadata_to_omero(
                 )
 
         # Determine final status
+        logger.info(f"\n{'='*80}")
+        logger.info("UPLOAD SUMMARY")
+        logger.info(f"{'='*80}")
+
         if processed_ok:
             summary["status"] = "success"
             if replace:
@@ -181,6 +196,19 @@ def upload_metadata_to_omero(
             summary["message"] = (
                 f"Some {target_type.lower()}-level annotations may have failed (check logs)."
             )
+
+        # Log summary details
+        if replace:
+            logger.info(f"Mode: REPLACE (removed {summary['removed_annotations']} old annotations)")
+        else:
+            logger.info(f"Mode: APPEND (kept existing annotations)")
+
+        logger.info(f"Target: {target_type} ID {target_id}")
+        logger.info(f"Wells processed: {summary['wells_processed']}")
+        logger.info(f"Wells succeeded: {summary['wells_succeeded']}")
+        logger.info(f"Wells failed: {summary['wells_failed']}")
+        logger.info(f"Status: {summary['status'].upper()}")
+        logger.info(f"{'='*80}\n")
 
         logger.info(f"Annotation process finished for {target_type} {target_id}")
 
@@ -217,35 +245,41 @@ def _apply_grouped_metadata(
         return True
 
     success = True
+    total_groups = len(groups)
+    successful_groups = 0
 
-    for group_name, group_data in groups.items():
+    for group_idx, (group_name, group_data) in enumerate(groups.items(), 1):
         if not isinstance(group_data, dict):
-            logger.warning(f"Group '{group_name}' data is not a dictionary, skipping")
+            logger.warning(f"  ⚠ Group '{group_name}' data is not a dictionary, skipping")
             continue
 
         # Filter out None/NaN values
         kv_pairs = {str(k): str(v) for k, v in group_data.items() if v is not None and pd.notna(v)}
 
         if not kv_pairs:
-            logger.debug(f"Group '{group_name}' is empty after filtering, skipping")
+            logger.debug(f"  ⊘ Group '{group_name}' is empty after filtering, skipping")
             continue
 
         # Create namespace for this group
         group_namespace = f"{base_namespace}/{group_name}"
 
         try:
+            logger.info(f"  [{group_idx}/{total_groups}] Uploading group: '{group_name}'")
+            logger.info(f"      → {len(kv_pairs)} key-value pair(s)")
+            logger.info(f"      → Namespace: {group_namespace}")
+
             ann_id = create_map_annotation(conn, obj_type, obj_id, kv_pairs, group_namespace)
             if ann_id:
-                logger.debug(
-                    f"Applied group '{group_name}' metadata (Annotation ID: {ann_id})"
-                )
+                logger.info(f"      ✓ Created MapAnnotation ID: {ann_id}")
+                successful_groups += 1
             else:
-                logger.error(f"Failed to apply group '{group_name}' metadata")
+                logger.error(f"      ✗ Failed to apply group '{group_name}' metadata")
                 success = False
         except Exception as e:
-            logger.error(f"Error applying group '{group_name}' metadata: {e}")
+            logger.error(f"      ✗ Error applying group '{group_name}': {e}")
             success = False
 
+    logger.info(f"  → Successfully uploaded {successful_groups}/{total_groups} group(s)")
     return success
 
 
@@ -423,33 +457,69 @@ def _remove_metadata_recursive(
     Returns:
         Total number of annotations removed
     """
+    logger.info(f"\n{'='*80}")
+    logger.info(f"REMOVING ANNOTATIONS (namespace: {namespace})")
+    logger.info(f"{'='*80}")
+
     total_removed = 0
 
     # Remove from target object
-    total_removed += delete_annotations_from_object(conn, target_type, target_id, namespace)
+    logger.info(f"\n[1/3] Processing {target_type} (ID: {target_id})...")
+    removed = delete_annotations_from_object(conn, target_type, target_id, namespace)
+    total_removed += removed
+    logger.info(f"  → Removed {removed} annotation(s) from {target_type}")
 
     # If Screen, process plates and wells
     if target_type == "Screen":
         screen = conn.getObject("Screen", target_id)
         if screen:
-            for plate in screen.listChildren():
+            plates = list(screen.listChildren())
+            logger.info(f"\n[2/3] Processing {len(plates)} plate(s) in Screen...")
+
+            for plate_idx, plate in enumerate(plates, 1):
                 plate_id = plate.getId()
-                total_removed += delete_annotations_from_object(conn, "Plate", plate_id, namespace)
+                plate_name = plate.getName()
+                logger.info(f"\n  Plate {plate_idx}/{len(plates)}: '{plate_name}' (ID: {plate_id})")
+
+                removed = delete_annotations_from_object(conn, "Plate", plate_id, namespace)
+                total_removed += removed
+                logger.info(f"    → Removed {removed} annotation(s) from Plate")
 
                 # Remove from wells
-                for well in plate.listChildren():
-                    well_id = well.getId()
-                    total_removed += delete_annotations_from_object(
-                        conn, "Well", well_id, namespace
-                    )
+                wells = list(plate.listChildren())
+                if wells:
+                    logger.info(f"    Processing {len(wells)} well(s)...")
+                    well_removed = 0
+                    for well in wells:
+                        well_id = well.getId()
+                        removed = delete_annotations_from_object(
+                            conn, "Well", well_id, namespace
+                        )
+                        well_removed += removed
+
+                    total_removed += well_removed
+                    logger.info(f"    → Removed {well_removed} annotation(s) from {len(wells)} well(s)")
 
     # If Plate, process wells
     elif target_type == "Plate":
         plate = conn.getObject("Plate", target_id)
         if plate:
-            for well in plate.listChildren():
+            plate_name = plate.getName()
+            wells = list(plate.listChildren())
+            logger.info(f"\n[2/3] Processing {len(wells)} well(s) in Plate '{plate_name}'...")
+
+            well_removed = 0
+            for well in wells:
                 well_id = well.getId()
-                total_removed += delete_annotations_from_object(conn, "Well", well_id, namespace)
+                removed = delete_annotations_from_object(conn, "Well", well_id, namespace)
+                well_removed += removed
+
+            total_removed += well_removed
+            logger.info(f"  → Removed {well_removed} annotation(s) from {len(wells)} well(s)")
+
+    logger.info(f"\n{'='*80}")
+    logger.info(f"REMOVAL COMPLETE: {total_removed} total annotations removed")
+    logger.info(f"{'='*80}\n")
 
     return total_removed
 

@@ -931,6 +931,24 @@ class AssayCondition(BaseModel):
         except ValueError:
             raise ValueError(f"Invalid well format: {v}")
 
+    def to_dict(self) -> Dict[str, Any]:
+        """
+        Convert AssayCondition to a flat dictionary for upload/export.
+
+        Returns all fields (using field aliases/capitalized names) plus custom conditions.
+        This is used by both to_dataframe() and upload functions.
+
+        Returns:
+            Dictionary with Plate, Well, Treatment, Dose, etc. (using aliases)
+        """
+        # Use model_dump with by_alias=True to get capitalized field names
+        row_data = self.model_dump(by_alias=True, exclude_none=True, exclude={"conditions"})
+
+        # Add any additional custom fields from conditions dict
+        row_data.update(self.conditions)
+
+        return row_data
+
 
 class ReferenceSheet(BaseModel):
     """Reference sheet data (sheets starting with '_')."""
@@ -1102,15 +1120,7 @@ class MIHCSMEMetadata(BaseModel):
         if not self.assay_conditions:
             return pd.DataFrame()
 
-        conditions_data = []
-        for condition in self.assay_conditions:
-            row = {
-                "Plate": condition.plate,
-                "Well": condition.well,
-                **condition.conditions,  # All custom fields
-            }
-            conditions_data.append(row)
-
+        conditions_data = [condition.to_dict() for condition in self.assay_conditions]
         return pd.DataFrame(conditions_data)
 
     def update_conditions_from_dataframe(self, df: "pd.DataFrame") -> "MIHCSMEMetadata":
