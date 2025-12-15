@@ -1,0 +1,51 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for git info plugin
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: |
+          uv pip install --system -e ".[docs]"
+
+      - name: Configure Git
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email github-actions[bot]@users.noreply.github.com
+
+      - name: Deploy documentation
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          mkdocs gh-deploy --force --clean --verbose
+
+      - name: Build documentation (PR preview)
+        if: github.event_name == 'pull_request'
+        run: |
+          mkdocs build --strict --verbose
