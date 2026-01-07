@@ -120,7 +120,7 @@ def _(column_select, format_select, mo, plate_select):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(column_select, df, format_select, mo, plate_select, visualize_plate):
     # Generate plate visualization based on selections
     if column_select.value and plate_select.value:
@@ -140,6 +140,7 @@ def _(column_select, df, format_select, mo, plate_select, visualize_plate):
 
 @app.cell
 def _(df, mo):
+    #editor = mo.ui.data_editor(df[df['Plate']==plate_select.value])
     editor = mo.ui.data_editor(df)
     editor
     return (editor,)
