@@ -25,9 +25,7 @@ SHEET_ASSAY = "AssayInformation"
 SHEET_CONDITIONS = "AssayConditions"
 
 
-def parse_excel_to_model(
-    excel_source: Union[str, Path, bytes, BytesIO]
-) -> MIHCSMEMetadata:
+def parse_excel_to_model(excel_source: Union[str, Path, bytes, BytesIO]) -> MIHCSMEMetadata:
     """
     Parse a MIHCSME Excel file into a Pydantic model.
 
@@ -202,19 +200,6 @@ def _parse_assay_conditions(xls: pd.ExcelFile, sheet_name: str) -> list:
         # Drop columns with NaN headers
         data_rows = data_rows.loc[:, ~pd.isna(headers)]
 
-        # Standard fields that have dedicated properties in AssayCondition
-        standard_fields = {
-            "Plate",
-            "Well",
-            "Treatment",
-            "Dose",
-            "DoseUnit",
-            "CellLine",
-            "TimeTreatment",
-            "ReplID",
-            "remarks",
-        }
-
         # Convert to AssayCondition models
         assay_conditions = []
         for _, row in data_rows.iterrows():
@@ -224,26 +209,17 @@ def _parse_assay_conditions(xls: pd.ExcelFile, sheet_name: str) -> list:
             if pd.isna(plate) or pd.isna(well):
                 continue
 
-            # Build the row data dictionary with all non-NaN values
-            row_data = {"Plate": str(plate), "Well": str(well)}
-
-            # Extract standard fields
-            for col in data_rows.columns:
-                if col in standard_fields and col not in ["Plate", "Well"]:
-                    if not pd.isna(row[col]):
-                        row_data[col] = row[col]
-
-            # Extract custom fields into conditions dictionary
+            # All columns except Plate and Well go into conditions
             conditions = {}
             for col in data_rows.columns:
-                if col not in standard_fields and not pd.isna(row[col]):
+                if col in ["Plate", "Well"]:
+                    continue
+                if not pd.isna(row[col]):
                     conditions[col] = row[col]
 
-            # Add conditions to row_data if there are any
-            if conditions:
-                row_data["conditions"] = conditions
-
-            assay_conditions.append(AssayCondition(**row_data))
+            assay_conditions.append(
+                AssayCondition(plate=str(plate), well=str(well), conditions=conditions)
+            )
 
         logger.info(f"Parsed {len(assay_conditions)} assay conditions from '{sheet_name}'")
         return assay_conditions
