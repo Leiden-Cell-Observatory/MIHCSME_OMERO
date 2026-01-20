@@ -1104,3 +1104,44 @@ class MIHCSMEMetadata(BaseModel):
             }
         }
     )
+
+
+class MIHCSMEMetadataLLM(BaseModel):
+    """Subset of MIHCSMEMetadata for LLM extraction.
+
+    This model excludes assay_conditions and reference_sheets as they are
+    too large/complex for LLM context. Use this model when passing metadata
+    schema to an LLM for extraction or modification.
+    """
+
+    investigation_information: Optional[InvestigationInformation] = None
+    study_information: Optional[StudyInformation] = None
+    assay_information: Optional[AssayInformation] = None
+
+    def to_full_metadata(
+        self,
+        assay_conditions: Optional[List[AssayCondition]] = None,
+        reference_sheets: Optional[List[ReferenceSheet]] = None,
+    ) -> MIHCSMEMetadata:
+        """Convert to full MIHCSMEMetadata with optional conditions.
+
+        Args:
+            assay_conditions: Optional list of assay conditions to include
+            reference_sheets: Optional list of reference sheets to include
+
+        Returns:
+            Full MIHCSMEMetadata instance
+        """
+        return MIHCSMEMetadata(
+            investigation_information=self.investigation_information,
+            study_information=self.study_information,
+            assay_information=self.assay_information,
+            assay_conditions=assay_conditions or [],
+            reference_sheets=reference_sheets or [],
+        )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "description": "MIHCSME metadata for LLM extraction (excludes per-well assay conditions)"
+        }
+    )

@@ -8,6 +8,7 @@ from mihcsme_py.models import (
     Channel,
     InvestigationInformation,
     MIHCSMEMetadata,
+    MIHCSMEMetadataLLM,
     Specimen,
     StudyInformation,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "Channel",
     "InvestigationInformation",
     "MIHCSMEMetadata",
+    "MIHCSMEMetadataLLM",
     "Specimen",
     "StudyInformation",
     "connect",

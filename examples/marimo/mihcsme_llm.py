@@ -22,7 +22,13 @@ def _():
         InvestigationInformation,
         MIHCSMEMetadata
     )
-    return MIHCSMEMetadata, llm, parse_excel_to_model, pprint
+    return (
+        MIHCSMEMetadata,
+        llm,
+        parse_excel_to_model,
+        pprint,
+        write_metadata_to_excel,
+    )
 
 
 @app.cell
@@ -57,7 +63,7 @@ def _(pprint, resp):
 
 @app.cell
 def _(MIHCSMEMetadata, model, resp):
-    resp2 = model.prompt(resp.text(),schema=MIHCSMEMetadata)
+    resp2 = model.prompt(f"Ignore the assay conditions try to fill in the other field if you find the needed information {resp.text()}",schema=MIHCSMEMetadata)
     return (resp2,)
 
 
@@ -84,6 +90,19 @@ def _(MIHCSMEMetadata, resp2):
 
     # Display the instance
     metadata_instance
+    return (metadata_instance,)
+
+
+@app.cell
+def _(metadata_instance, write_metadata_to_excel):
+    output_path = "LLM_metadata.xlsx"
+    write_metadata_to_excel(metadata_instance, output_path)
+
+    return
+
+
+@app.cell
+def _():
     return
 
 
