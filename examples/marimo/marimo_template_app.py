@@ -50,6 +50,7 @@ def _():
 
 @app.cell
 def _(ENABLE_LLM_FEATURES):
+    import io
     from pathlib import Path
 
     import marimo as mo
@@ -1507,7 +1508,6 @@ def _(mo):
 def _(
     AssayInformation,
     InvestigationInformation,
-    Path,
     StudyInformation,
     assay_updated_assay,
     assay_updated_assay_component,
@@ -1520,6 +1520,7 @@ def _(
     inv_updated_collaborators,
     inv_updated_data_owner,
     inv_updated_investigation_info,
+    io,
     metadata_updated,
     mo,
     study_updated_biosample,
@@ -1530,6 +1531,7 @@ def _(
     write_metadata_to_excel,
 ):
     export_result = None
+    download_button = None
     if export_button.value:
         try:
             _final_metadata = metadata_updated.model_copy(deep=True)
@@ -1572,19 +1574,31 @@ def _(
             except NameError:
                 pass
 
-            _output_path = Path(export_filename.value)
-            write_metadata_to_excel(_final_metadata, _output_path)
+            # Write to BytesIO buffer for download
+            _buffer = io.BytesIO()
+            write_metadata_to_excel(_final_metadata, _buffer)
+            _buffer.seek(0)
+
+            # Create download button
+            download_button = mo.download(
+                data=_buffer.getvalue(),
+                filename=export_filename.value,
+                mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                label="⬇ Download Excel file",
+            )
 
             export_result = mo.callout(
-                mo.md(f"**Successfully exported to:** `{_output_path}`"), kind="success"
+                mo.md("**Export ready!** Click the button below to download."),
+                kind="success",
             )
         except Exception as e:
             export_result = mo.callout(mo.md(f"**Error exporting:** {str(e)}"), kind="danger")
-    return (export_result,)
+    return download_button, export_result
 
 
 @app.cell(hide_code=True)
 def _(
+    download_button,
     export_button,
     export_filename,
     export_result,
@@ -1618,6 +1632,13 @@ def _(
         # Build export controls
         _export_controls = mo.vstack([export_filename, export_button], gap=1)
 
+        # Build download section
+        _download_section = (
+            mo.vstack([export_result, download_button], gap=1)
+            if download_button
+            else (export_result if export_result else mo.md(""))
+        )
+
         # Assemble the Export tab content
         export_tab_content = mo.vstack(
             [
@@ -1630,7 +1651,7 @@ def _(
                 mo.md("---"),
                 mo.md("**Export Settings**"),
                 _export_controls,
-                export_result if export_result else mo.md(""),
+                _download_section,
             ],
             gap=2,
         )
