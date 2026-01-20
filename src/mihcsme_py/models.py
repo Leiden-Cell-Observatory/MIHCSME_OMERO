@@ -1023,7 +1023,7 @@ class MIHCSMEMetadata(BaseModel):
         )
 
     @classmethod
-    def from_dataframe(cls, df: "pd.DataFrame", **kwargs) -> "MIHCSMEMetadata":
+    def from_dataframe(cls, df: "pd.DataFrame", **kwargs: Any) -> "MIHCSMEMetadata":
         """
         Create MIHCSMEMetadata from a pandas DataFrame of assay conditions.
 
