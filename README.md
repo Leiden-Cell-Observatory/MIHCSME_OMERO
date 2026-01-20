@@ -177,11 +177,6 @@ mihcsme-omero/
 └── CLAUDE.md                    # Developer documentation
 ```
 
-## Documentation
-
-- [CLAUDE.md](CLAUDE.md) - Comprehensive developer documentation
-- [LEI-MIHCSME.xlsx](LEI-MIHCSME.xlsx) - Example MIHCSME Excel file
-
 ## Contributing
 
 Contributions are welcome! Please:
