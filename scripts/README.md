@@ -1,4 +1,4 @@
-To let make the OMERO.script for MIHCSME-py work on your OMERO server, add the following to the Dockerfile of OMERO.server.
+To make the OMERO.script for MIHCSME-py available  on your OMERO server, add the following to the Dockerfile of OMERO.server.
 
 Download the script from the Github repository.
 ```
